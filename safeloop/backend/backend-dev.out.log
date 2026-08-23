@@ -1,0 +1,4 @@
+INFO:     127.0.0.1:57635 - "OPTIONS /api/auth/login HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:57635 - "OPTIONS /api/auth/login HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:60870 - "OPTIONS /api/auth/register HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:60870 - "OPTIONS /api/auth/register HTTP/1.1" 400 Bad Request
