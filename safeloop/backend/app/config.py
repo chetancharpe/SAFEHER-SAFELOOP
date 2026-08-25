@@ -15,6 +15,18 @@ class Settings(BaseSettings):
     demo_mode: bool = True
     real_notification_provider: str = ""
 
+    # Twilio SMS Config
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from_number: str = ""
+
+    # SMTP Email Config
+    smtp_server: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.backend_cors_origins.split(",") if origin.strip()]

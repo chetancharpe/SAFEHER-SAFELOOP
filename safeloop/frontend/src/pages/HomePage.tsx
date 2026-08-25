@@ -26,22 +26,65 @@ export default function HomePage() {
   const [loading, setLoading] = useState("");
   const [error, setError] = useState("");
   const [voiceStatus, setVoiceStatus] = useState("Not started");
+  const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [recognitionInstance, setRecognitionInstance] = useState<any>(null);
 
   const accepted = useMemo(() => {
     const acceptedEvents = events.filter((event) => event.event === "sos_accepted");
     return acceptedEvents[acceptedEvents.length - 1];
   }, [events]);
 
+  function getBrowserLocation(): Promise<{ latitude: number; longitude: number }> {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error("Geolocation is not supported by your browser."));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          });
+        },
+        (error) => {
+          reject(error);
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      );
+    });
+  }
+
   async function compare(event?: FormEvent) {
     event?.preventDefault();
     setError("");
     setLoading("Calculating routes...");
     try {
-      const data = await api<{ routes: RouteOption[] }>("/api/routes/compare", { method: "POST", body: JSON.stringify({ destination, demo: destination.toLowerCase().includes("home") }) });
+      let lat = 28.6139;
+      let lng = 77.2090;
+      try {
+        const pos = await getBrowserLocation();
+        lat = pos.latitude;
+        lng = pos.longitude;
+        setCoords(pos);
+      } catch (err: any) {
+        console.warn("Could not get high-accuracy browser location, using defaults:", err);
+      }
+
+      const data = await api<{ routes: RouteOption[] }>("/api/routes/compare", {
+        method: "POST",
+        body: JSON.stringify({
+          origin: "Current Location",
+          destination,
+          latitude: lat,
+          longitude: lng,
+          demo: destination.toLowerCase().includes("home")
+        })
+      });
       setRoutes(data.routes);
       setSelected(data.routes.find((route) => route.recommended) ?? data.routes[0]);
     } catch (err: any) {
-      setError(err.message || "Location permission is required to calculate your current route.");
+      setError(err.message || "Failed to calculate route candidates.");
     } finally {
       setLoading("");
     }
@@ -70,20 +113,60 @@ export default function HomePage() {
     try {
       const recognition = new Speech();
       recognition.continuous = true;
+      recognition.interimResults = false;
+      
       recognition.onresult = (event: any) => {
         const transcript = Array.from(event.results).map((result: any) => result[0].transcript).join(" ").toLowerCase();
         if (transcript.includes(user.emergency_phrase.toLowerCase())) setCountdown(true);
       };
+      
+      recognition.onerror = (err: any) => {
+        console.error("Speech recognition error:", err);
+      };
+      
+      recognition.onend = () => {
+        // Automatically restart speech recognition if voice status is still ACTIVE
+        if (voiceStatus === "ACTIVE" || journey) {
+          try {
+            recognition.start();
+          } catch (e) {
+            console.error("Error restarting speech recognition:", e);
+          }
+        }
+      };
+      
       recognition.start();
+      setRecognitionInstance(recognition);
       setVoiceStatus("ACTIVE");
-    } catch {
+    } catch (err) {
+      console.error("Failed to start voice monitoring:", err);
       setVoiceStatus("Demo trigger available");
     }
   }
 
   async function createSOS(trigger_type = "voice_command") {
     setCountdown(false);
-    const data = await api<any>("/api/sos", { method: "POST", body: JSON.stringify({ trigger_type, journey_id: journey?.id }) });
+    let lat = coords?.latitude ?? 28.6139;
+    let lng = coords?.longitude ?? 77.2090;
+    
+    try {
+      const pos = await getBrowserLocation();
+      lat = pos.latitude;
+      lng = pos.longitude;
+      setCoords(pos);
+    } catch (e) {
+      console.warn("Could not refresh location for SOS, using last known coordinates", e);
+    }
+    
+    const data = await api<any>("/api/sos", {
+      method: "POST",
+      body: JSON.stringify({
+        trigger_type,
+        journey_id: journey?.id,
+        latitude: lat,
+        longitude: lng
+      })
+    });
     setEmergency({ id: data.event.id, status: data.event.status, trusted_contacts_notified: data.trusted_contacts_notified, nearby_responders: data.nearby_responders });
   }
 
@@ -92,8 +175,20 @@ export default function HomePage() {
     if (journey) {
       const data = await api<any>(`/api/journeys/${journey.id}/complete`, { method: "POST", body: JSON.stringify({ status: "completed" }) });
       setReport(data.report);
+      setJourney(null);
     }
     setEmergency(null);
+    
+    if (recognitionInstance) {
+      try {
+        recognitionInstance.onend = null;
+        recognitionInstance.stop();
+      } catch (e) {
+        console.error("Error stopping speech recognition:", e);
+      }
+      setRecognitionInstance(null);
+    }
+    setVoiceStatus("Not started");
   }
 
   async function submitFeedback(rating: number) {
